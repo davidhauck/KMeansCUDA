@@ -1,14 +1,6 @@
 //David Hauck
 //December 6, 2014
 
-//#ifdef _WIN32
-//#  define WINDOWS_LEAN_AND_MEAN
-//#  define NOMINMAX
-//#  include <windows.h>
-//#else
-//#  include <sys/utsname.h>
-//#endif
-
 #include <stdio.h>
 #include <cassert>
 
@@ -22,13 +14,9 @@
 // CUDA helper functions
 #include <helper_cuda.h>
 
-#define N_PIONEER 697
-#define N N_PIONEER
-//#define N 1000000
+#define N 1000000
 #define BLOCK_SIZE 32
-#define K_PIONEER 16
-#define K K_PIONEER
-//#define K 4
+#define K 4
 #define BLOCK_SIZE_CLUSTERS 256
 
 void runKMeansCUDA(int argc, char **argv);
@@ -49,9 +37,6 @@ double distance2CPU(double x1, double y1, double x2, double y2)
 	double y = y2 - y1;
 	return x*x + y*y;
 }
-
-double *xCoords;
-double *yCoords;
 
 __global__ void calcDistances(double* x, double* y, double* global_xNodes, double* global_yNodes, int* chosenNodes, int* changedNodes)
 {
@@ -166,58 +151,6 @@ __global__ void calcClusterCenters(double* x, double* y, double* global_xNodes, 
 	}
 }
 
-//taken from http://stackoverflow.com/questions/9210528/split-string-with-delimiters-in-c
-char** str_split(char* a_str, const char a_delim)
-{
-	char** result = 0;
-	size_t count = 0;
-	char* tmp = a_str;
-	char* last_comma = 0;
-	char delim[2];
-	delim[0] = a_delim;
-	delim[1] = 0;
-
-	/* Count how many elements will be extracted. */
-	while (*tmp)
-	{
-		if (a_delim == *tmp)
-		{
-			count++;
-			last_comma = tmp;
-		}
-		tmp++;
-	}
-
-	/* Add space for trailing token. */
-	count += last_comma < (a_str + strlen(a_str) - 1);
-
-	/* Add space for terminating null string so caller
-	knows where the list of returned strings ends. */
-	count++;
-
-	result = (char**)malloc(sizeof(char*) * count);
-
-	if (result)
-	{
-		size_t idx = 0;
-		char* token = strtok(a_str, delim);
-
-		while (token)
-		{
-			assert(idx < count);
-			*(result + idx++) = strdup(token);
-			token = strtok(0, delim);
-		}
-		assert(idx == count - 1);
-		*(result + idx) = 0;
-	}
-
-	return result;
-}
-
-double maxX;
-double maxY;
-
 double my_max(double n1, double n2)
 {
 	if (n1 > n2)
@@ -225,39 +158,13 @@ double my_max(double n1, double n2)
 	return n2;
 }
 
-void addToData(char s[300], int i)
-{
-	char **splitString = str_split(s, ',');
-	char* sonar3 = splitString[7];
-	char* sonar4 = splitString[8];
-	double newX = atof(sonar3);
-	double newY = atof(sonar4);
-	xCoords[i] = newX;
-	yCoords[i] = newY;
-	maxX = my_max(maxX, newX);
-	maxY = my_max(maxY, newY);
-}
-
-FILE* file;
-void readDataSet()
-{
-	xCoords = (double*)malloc(sizeof(double)* N_PIONEER);
-	yCoords = (double*)malloc(sizeof(double)* N_PIONEER);
-	file = fopen("C:\\Users\\david\\Source\\Repos\\KMeansCUDA\\KMeans\\GRIPPER.DATA", "r");
-	char s[300];
-	int i = 0;
-	while (fscanf(file, "%s", s) != EOF) {
-		addToData(s, i);
-		i++;
-	}
-}
-
 int main(int argc, char **argv)
 {
-	readDataSet();
 	runKMeansCPU();
 	runKMeansCUDA(argc, argv);
 	cudaDeviceReset();
+	char s[100];
+	fgets(s, sizeof(s), stdin);
 }
 
 int calcDistancesCPU(double* xCoords, double* yCoords, double* xNodes, double* yNodes, int* chosenNodes)
@@ -354,20 +261,20 @@ void runKMeansCPU()
 		cudaEventSynchronize(t1);
 
 		//initialize the data with random values
-		/*double* xCoords = (double*)malloc(N * sizeof(double));
+		double* xCoords = (double*)malloc(N * sizeof(double));
 		double* yCoords = (double*)malloc(N * sizeof(double));
 		for (int i = 0; i < N; i++)
 		{
-		xCoords[i] = rand();
-		yCoords[i] = rand();
-		}*/
+			xCoords[i] = rand() % 100;
+			yCoords[i] = rand() % 100;
+		}
 
 		double* yNodes = (double*)malloc(K * sizeof(double));
 		double* xNodes = (double*)malloc(K * sizeof(double));
 		for (int i = 0; i < K; i++)
 		{
-			xNodes[i] = rand() % (int)maxX;
-			yNodes[i] = rand() % (int)maxY;
+			xNodes[i] = rand() % 100;
+			yNodes[i] = rand() % 100;
 		}
 
 		int* chosenNodes = (int*)malloc(N * sizeof(int));
@@ -454,20 +361,20 @@ void runKMeansCUDA(int argc, char **argv)
 		int Nthreads = BLOCK_SIZE;
 
 		//initialize the data with random values
-		/*double* xCoords = (double*)malloc(N * sizeof(double));
+		double* xCoords = (double*)malloc(N * sizeof(double));
 		double* yCoords = (double*)malloc(N * sizeof(double));
 		for (int i = 0; i < N; i++)
 		{
-		xCoords[i] = rand();
-		yCoords[i] = rand();
-		}*/
+			xCoords[i] = rand() % 100;
+			yCoords[i] = rand() % 100;
+		}
 
 		double* yNodes = (double*)malloc(K * sizeof(double));
 		double* xNodes = (double*)malloc(K * sizeof(double));
 		for (int i = 0; i < K; i++)
 		{
-			xNodes[i] = rand() % (int)maxX;
-			yNodes[i] = rand() % (int)maxY;
+			xNodes[i] = rand() % 100;
+			yNodes[i] = rand() % 100;
 		}
 
 		int* chosenNodes = (int*)malloc(N * sizeof(int));
@@ -591,8 +498,8 @@ void runKMeansCUDA(int argc, char **argv)
 		solveTotal += timeSolve;
 		total += timeTotal;
 	}
-	free(xCoords);
-	free(yCoords);
+	//free(xCoords);
+	//free(yCoords);
 	float totalTimeAvg = total / 10;
 	float solveTimeAvg = solveTotal / 10;
 	printf("GPU Solve Time Avg:%3.1f\r\nTotal Time Avg:%3.1f\r\n", solveTimeAvg, totalTimeAvg);
