@@ -15,9 +15,9 @@
 #include <helper_cuda.h>
 
 #define N 1000000
-#define BLOCK_SIZE 32
+#define BLOCK_SIZE 512
 #define K 4
-#define BLOCK_SIZE_CLUSTERS 256
+#define BLOCK_SIZE_CLUSTERS 1024
 
 #define TEST_ITERATIONS 20
 
@@ -52,30 +52,22 @@ __global__ void calcDistances(double* x, double* y, double* global_xNodes, doubl
 	__shared__ double yNodes[K];
 	__shared__ int localChangedNodes[BLOCK_SIZE];
 
-	//copying over from global to shared memory goes faster on just one thread per block
-	if (threadIdx.x == 0)
+	ys[id] = y[block_offset + id];
+	xs[id] = x[block_offset + id];
+
+	if (id < K)
 	{
-		//copy coordinates to shared memory
-		for (int i = 0; i < BLOCK_SIZE; i++)
-		{
-			ys[i] = y[block_offset + i];
-			xs[i] = x[block_offset + i];
-		}
-		//copy cluster centers to shared memory
-		for (int i = 0; i < K; i++)
-		{
-			xNodes[i] = global_xNodes[i];
-			yNodes[i] = global_yNodes[i];
-		}
+		xNodes[id] = global_xNodes[id];
+		yNodes[id] = global_yNodes[id];
 	}
 
 	//make sure all memory is copied locally
 	__syncthreads();
 
 	//check distances to all cluster nodes. Take the closest one
-	double minDistance = distance2(xs[id], ys[id], xNodes[0], yNodes[0]);
-	int chosenNode = 0;
-	for (int i = 1; i < K; i++)
+	double minDistance = INT_MAX;
+	int chosenNode = -1;
+	for (int i = 0; i < K; i++)
 	{
 		double dist = distance2(xs[id], ys[id], xNodes[i], yNodes[i]);
 		if (dist < minDistance)
@@ -91,11 +83,11 @@ __global__ void calcDistances(double* x, double* y, double* global_xNodes, doubl
 		localChangedNodes[id] = 1;
 	chosenNodes[block_offset + id] = chosenNode;
 	__syncthreads();
-	for (int i = BLOCK_SIZE / 2; i > 0; i /= 2)
+	for (int q = BLOCK_SIZE / 2; q > 0; q /= 2)
 	{
-		if (id < i)
+		if (id < q)
 		{
-			localChangedNodes[id] += localChangedNodes[id + i];
+			localChangedNodes[id] += localChangedNodes[id + q];
 		}
 		__syncthreads();
 	}
@@ -345,12 +337,15 @@ void runKMeansCUDA(int argc, char **argv)
 	for (int j = 0; j < TEST_ITERATIONS; j++)
 	{
 		printf("GPU iteration %d:\r\n", j);
-		cudaEvent_t t1, t2, t3, t4, t5;
+		cudaEvent_t t1, t2, t3, t4, t5, first, second, third;
 		cudaEventCreate(&t1);
 		cudaEventCreate(&t2);
 		cudaEventCreate(&t3);
 		cudaEventCreate(&t4);
 		cudaEventCreate(&t5);
+		cudaEventCreate(&first);
+		cudaEventCreate(&second);
+		cudaEventCreate(&third);
 
 		cudaEventRecord(t1, 0);
 		cudaEventSynchronize(t1);
@@ -451,14 +446,38 @@ void runKMeansCUDA(int argc, char **argv)
 		int totalChanges;
 		do
 		{
+			cudaEventRecord(first, 0);
+			cudaEventSynchronize(first);
+
 			calcDistances <<<dimGrid, dimBlock>>>(d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes, d_changedNodes);
+			cudaDeviceSynchronize();
+			cudaEventRecord(second, 0);
+			cudaEventSynchronize(second);
+
+			float distancesTime;
+			cudaEventElapsedTime(&distancesTime, first, second);
+
 			checkCudaErrors(cudaMemcpy(changedNodes, d_changedNodes, Nblocks * sizeof(int), cudaMemcpyDeviceToHost));
 			totalChanges = 0;
 			for (int i = 0; i < Nblocks; i++)
 			{
 				totalChanges += changedNodes[i];
 			}
+
+
+			cudaEventRecord(first, 0);
+			cudaEventSynchronize(first);
+
 			calcClusterCenters <<<kDim3, bscDim3 >>>(d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes);
+
+			cudaDeviceSynchronize();
+			cudaEventRecord(second, 0);
+			cudaEventSynchronize(second);
+
+			float centersTime;
+			cudaEventElapsedTime(&centersTime, first, second);
+
+			printf("DistancesTime:%3.1f\r\nCenters Time:%3.1f", distancesTime, centersTime);
 			//printf("%d\r\n", totalChanges);
 		} while (totalChanges > 0.01 * N);
 
