@@ -19,6 +19,8 @@
 #define K 4
 #define BLOCK_SIZE_CLUSTERS 256
 
+#define TEST_ITERATIONS 20
+
 void runKMeansCUDA(int argc, char **argv);
 void runKMeansCPU();
 
@@ -160,7 +162,7 @@ double my_max(double n1, double n2)
 
 int main(int argc, char **argv)
 {
-	runKMeansCPU();
+	//runKMeansCPU();
 	runKMeansCUDA(argc, argv);
 	cudaDeviceReset();
 	char s[100];
@@ -248,7 +250,7 @@ void calcClusterCentersCPU(double* xCoords, double* yCoords, double* xNodes, dou
 void runKMeansCPU()
 {
 	float solveTotal = 0, total = 0;
-	for (int j = 0; j < 3; j++)
+	for (int j = 0; j < TEST_ITERATIONS; j++)
 	{
 		printf("CPU iteration %d:\r\n", j);
 		cudaEvent_t t1, t2, t3;
@@ -332,15 +334,15 @@ void runKMeansCPU()
 		free(yNodes);
 
 	}
-	float totalTimeAvg = total / 10;
-	float solveTimeAvg = solveTotal / 10;
+	float totalTimeAvg = total / TEST_ITERATIONS;
+	float solveTimeAvg = solveTotal / TEST_ITERATIONS;
 	printf("CPU Solve Time Avg:%3.1f\r\nTotal Time Avg:%3.1f\r\n", solveTimeAvg, totalTimeAvg);
 }
 
 void runKMeansCUDA(int argc, char **argv)
 {
 	float solveTotal = 0, total = 0;
-	for (int j = 0; j < 3; j++)
+	for (int j = 0; j < TEST_ITERATIONS; j++)
 	{
 		printf("GPU iteration %d:\r\n", j);
 		cudaEvent_t t1, t2, t3, t4, t5;
@@ -352,8 +354,8 @@ void runKMeansCUDA(int argc, char **argv)
 
 		cudaEventRecord(t1, 0);
 		cudaEventSynchronize(t1);
-		//calculate the number of blocks based on the size of N. the block size is fixed at 32
-		int Nblocks = N / 32;
+		//calculate the number of blocks based on the size of N
+		int Nblocks = N / BLOCK_SIZE;
 		if (N % BLOCK_SIZE != 0)
 		{
 			Nblocks++;
@@ -457,7 +459,7 @@ void runKMeansCUDA(int argc, char **argv)
 				totalChanges += changedNodes[i];
 			}
 			calcClusterCenters <<<kDim3, bscDim3 >>>(d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes);
-			printf("%d\r\n", totalChanges);
+			//printf("%d\r\n", totalChanges);
 		} while (totalChanges > 0.01 * N);
 
 		cudaEventRecord(t4, 0);
@@ -500,7 +502,7 @@ void runKMeansCUDA(int argc, char **argv)
 	}
 	//free(xCoords);
 	//free(yCoords);
-	float totalTimeAvg = total / 10;
-	float solveTimeAvg = solveTotal / 10;
+	float totalTimeAvg = total / TEST_ITERATIONS;
+	float solveTimeAvg = solveTotal / TEST_ITERATIONS;
 	printf("GPU Solve Time Avg:%3.1f\r\nTotal Time Avg:%3.1f\r\n", solveTimeAvg, totalTimeAvg);
 }
