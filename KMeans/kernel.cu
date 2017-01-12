@@ -14,12 +14,12 @@
 // CUDA helper functions
 #include <helper_cuda.h>
 
-#define N 1000000
+#define N 33554432
 #define BLOCK_SIZE 512
 #define K 4
-#define BLOCK_SIZE_CLUSTERS 1024
+#define B (N/BLOCK_SIZE)
 
-#define TEST_ITERATIONS 20
+#define TEST_ITERATIONS 5
 
 void runKMeansCUDA(int argc, char **argv);
 void runKMeansCPU();
@@ -43,7 +43,7 @@ double distance2CPU(double x1, double y1, double x2, double y2)
 __global__ void calcDistances(double* x, double* y, double* global_xNodes, double* global_yNodes, int* chosenNodes, int* changedNodes)
 {
 	int id = threadIdx.x;
-	int block_offset = blockIdx.x*blockDim.x;
+	int block_offset = blockIdx.x*blockDim.x + blockIdx.y * gridDim.x * blockDim.x;
 
 	//shared memory is about 100x faster than global. Its worth it to copy to shared memory
 	__shared__ double xs[BLOCK_SIZE];
@@ -94,54 +94,72 @@ __global__ void calcDistances(double* x, double* y, double* global_xNodes, doubl
 	changedNodes[blockIdx.x] = localChangedNodes[0];
 }
 
-__global__ void calcClusterCenters(double* x, double* y, double* global_xNodes, double* global_yNodes, int* chosenNodes)
+__global__ void calcClusterCenters(double* x, double* y, double* global_xNodes, double* global_yNodes, int* global_chosenNodes, int* global_numCoords)
 {
 	//each block will do one cluster
-	int id = threadIdx.x;
-	int k = blockIdx.x;
-	__shared__ double xTotal[BLOCK_SIZE_CLUSTERS];
-	__shared__ double yTotal[BLOCK_SIZE_CLUSTERS];
-	__shared__ int numElements[BLOCK_SIZE_CLUSTERS];
-	xTotal[id] = 0.;
-	yTotal[id] = 0.;
-	numElements[id] = 0.;
+	int id = threadIdx.x + blockIdx.x * BLOCK_SIZE + blockIdx.y * gridDim.x * blockDim.x;
 
-	//add up all of the elements belonging to a certain node
-	for (int i = id; i < N; i += BLOCK_SIZE_CLUSTERS)
+	__shared__ double xTotal[BLOCK_SIZE * K];
+	__shared__ double yTotal[BLOCK_SIZE * K];
+	__shared__ int numCoords[BLOCK_SIZE * K];
+	for (int i = threadIdx.x; i < BLOCK_SIZE * K; i += BLOCK_SIZE)
 	{
-		int chosenNode = chosenNodes[i];
-		if (chosenNode == k)
-		{
-			xTotal[id] += x[i];
-			yTotal[id] += y[i];
-			numElements[id]++;
-		}
+		xTotal[i] = 0.;
+		yTotal[i] = 0.;
+		numCoords[i] = 0.;
 	}
+
+	//__syncthreads();
+	//add up all of the elements belonging to a certain node
+
+	int chosenNode = global_chosenNodes[id];
+
+	xTotal[threadIdx.x + chosenNode * BLOCK_SIZE] = x[id];
+	yTotal[threadIdx.x + chosenNode * BLOCK_SIZE] = y[id];
+	numCoords[threadIdx.x + chosenNode * BLOCK_SIZE]++;
 
 	//add together all of the values the nodes in the block found
 	__syncthreads();
-	for (int i = BLOCK_SIZE_CLUSTERS / 2; i > 0; i /= 2)
+
+	for (int q = BLOCK_SIZE / 2; q > 0; q /= 2)
 	{
-		if (id < i)
+		if (threadIdx.x < q)
 		{
-			xTotal[id] += xTotal[id + i];
-			yTotal[id] += yTotal[id + i];
-			numElements[id] += numElements[id + i];
+			for (int k = 0; k < K; k++)
+			{
+				int localIndex = threadIdx.x + k * BLOCK_SIZE;
+				int globalIndex = threadIdx.x + q + k * BLOCK_SIZE;
+				xTotal[localIndex] += xTotal[globalIndex];
+				yTotal[localIndex] += yTotal[globalIndex];
+				numCoords[localIndex] += numCoords[globalIndex];
+			}
 		}
 		__syncthreads();
 	}
 
-	//have one thread update the value with the new cluster center
-	if (id == 0)
+	if (threadIdx.x < K)
 	{
-		double newXPos = -1, newYPos = -1;
-		if (numElements[0] != 0)
+		global_xNodes[blockIdx.x * K + threadIdx.x] = xTotal[threadIdx.x * BLOCK_SIZE];
+		global_yNodes[blockIdx.x * K + threadIdx.x] = yTotal[threadIdx.x * BLOCK_SIZE];
+		global_numCoords[blockIdx.x * K + threadIdx.x] = numCoords[threadIdx.x * BLOCK_SIZE];
+	}
+}
+
+__global__ void finalizeClusterCenters(double* global_xNodes, double* global_yNodes, int* global_numCoords)
+{
+	if (threadIdx.x == 0)
+	{
+		int totalX = 0;
+		int totalY = 0;
+		int totalNumCoords = 0;
+		for (int i = 0; i < B; i++)
 		{
-			newXPos = xTotal[0] / numElements[0];
-			newYPos = yTotal[0] / numElements[0];
+			totalX += global_xNodes[i*K + blockIdx.x];
+			totalY += global_yNodes[i*K + blockIdx.x];
+			totalNumCoords += global_numCoords[i*K + blockIdx.x];
 		}
-		global_xNodes[k] = newXPos;
-		global_yNodes[k] = newYPos;
+		global_xNodes[blockIdx.x] = totalX / totalNumCoords;
+		global_yNodes[blockIdx.x] = totalY / totalNumCoords;
 	}
 }
 
@@ -407,9 +425,12 @@ void runKMeansCUDA(int argc, char **argv)
 
 		//create the matching data on the gpu
 		double* d_xNodes;
-		checkCudaErrors(cudaMalloc((void **)&d_xNodes, K * sizeof(double)));
+		checkCudaErrors(cudaMalloc((void **)&d_xNodes, B * K * sizeof(double)));
 		double* d_yNodes;
-		checkCudaErrors(cudaMalloc((void **)&d_yNodes, K * sizeof(double)));
+		checkCudaErrors(cudaMalloc((void **)&d_yNodes, B * K * sizeof(double)));
+
+		int* d_numCoords;
+		checkCudaErrors(cudaMalloc((void**)&d_numCoords, B * K * sizeof(int)));
 
 		double* d_xCoords;
 		checkCudaErrors(cudaMalloc((void **)&d_xCoords, N * sizeof(double)));
@@ -433,11 +454,36 @@ void runKMeansCUDA(int argc, char **argv)
 
 		// Kernel configuration, where a one-dimensional
 		// grid and one-dimensional blocks are configured.
-		dim3 dimGrid(Nblocks);
+		int NBlocksX, NBlocksY = 1;
+		if (Nblocks > 32768)
+		{
+			NBlocksX = 32768;
+			double d = Nblocks / 32768.;
+			NBlocksY = ceil(d);
+		}
+		else
+		{
+			NBlocksX = Nblocks;
+			NBlocksY = 1;
+		}
+		dim3 dimGrid(NBlocksX, NBlocksY);
 		dim3 dimBlock(Nthreads);
 
+		int bDim3X, bDim3Y;
+
+		if (B > 32768)
+		{
+			bDim3X = 32768;
+			double d = B / 32768.;
+			bDim3Y = ceil(d);
+		}
+		else
+		{
+			bDim3X = B;
+			bDim3Y = 1;
+		}
+		dim3 bDim3(bDim3X, bDim3Y);
 		dim3 kDim3(K);
-		dim3 bscDim3(BLOCK_SIZE_CLUSTERS);
 
 		cudaEventRecord(t3, 0);
 		cudaEventSynchronize(t3);
@@ -449,7 +495,7 @@ void runKMeansCUDA(int argc, char **argv)
 			cudaEventRecord(first, 0);
 			cudaEventSynchronize(first);
 
-			calcDistances <<<dimGrid, dimBlock>>>(d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes, d_changedNodes);
+			calcDistances << <dimGrid, dimBlock >> > (d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes, d_changedNodes);
 			cudaDeviceSynchronize();
 			cudaEventRecord(second, 0);
 			cudaEventSynchronize(second);
@@ -468,7 +514,7 @@ void runKMeansCUDA(int argc, char **argv)
 			cudaEventRecord(first, 0);
 			cudaEventSynchronize(first);
 
-			calcClusterCenters <<<kDim3, bscDim3 >>>(d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes);
+			calcClusterCenters << <bDim3, dimBlock >> > (d_xCoords, d_yCoords, d_xNodes, d_yNodes, d_chosenNodes, d_numCoords);
 
 			cudaDeviceSynchronize();
 			cudaEventRecord(second, 0);
@@ -477,7 +523,9 @@ void runKMeansCUDA(int argc, char **argv)
 			float centersTime;
 			cudaEventElapsedTime(&centersTime, first, second);
 
-			printf("DistancesTime:%3.1f\r\nCenters Time:%3.1f", distancesTime, centersTime);
+			finalizeClusterCenters << <kDim3, dimBlock >> > (d_xNodes, d_yNodes, d_numCoords);
+
+			printf("DistancesTime:%3.1f Centers Time:%3.1f\r\n", distancesTime, centersTime);
 			//printf("%d\r\n", totalChanges);
 		} while (totalChanges > 0.01 * N);
 
