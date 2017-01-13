@@ -33,3 +33,4 @@ Debug
 *.pdb
 *.VC.opendb
 *.VC.db
+/KMeans/x64/Release
