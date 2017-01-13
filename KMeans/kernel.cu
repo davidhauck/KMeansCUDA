@@ -22,31 +22,31 @@ void runKMeansCUDA(int argc, char **argv);
 void runKMeansCPU();
 
 //dont need to sqrt, just seeing if a value is larger than others
-__device__ double distance2(double x1, double y1, double x2, double y2)
+__device__ float distance2(float x1, float y1, float x2, float y2)
 {
-	double x = x2 - x1;
-	double y = y2 - y1;
+	float x = x2 - x1;
+	float y = y2 - y1;
 	return x*x + y*y;
 }
 
 //dont need to sqrt, just seeing if a value is larger than others
-double distance2CPU(double x1, double y1, double x2, double y2)
+float distance2CPU(float x1, float y1, float x2, float y2)
 {
-	double x = x2 - x1;
-	double y = y2 - y1;
+	float x = x2 - x1;
+	float y = y2 - y1;
 	return x*x + y*y;
 }
 
-__global__ void calcDistances(double* x, double* y, double* global_xNodes, double* global_yNodes, int* chosenNodes, int* changedNodes)
+__global__ void calcDistances(float* x, float* y, float* global_xNodes, float* global_yNodes, int* chosenNodes, int* changedNodes)
 {
 	int id = threadIdx.x;
 	int block_offset = blockIdx.x*blockDim.x + blockIdx.y * gridDim.x * blockDim.x;
 
 	//shared memory is about 100x faster than global. Its worth it to copy to shared memory
-	__shared__ double xs[BLOCK_SIZE];
-	__shared__ double ys[BLOCK_SIZE];
-	__shared__ double xNodes[K];
-	__shared__ double yNodes[K];
+	__shared__ float xs[BLOCK_SIZE];
+	__shared__ float ys[BLOCK_SIZE];
+	__shared__ float xNodes[K];
+	__shared__ float yNodes[K];
 	__shared__ int localChangedNodes[BLOCK_SIZE];
 
 	ys[id] = y[block_offset + id];
@@ -62,11 +62,11 @@ __global__ void calcDistances(double* x, double* y, double* global_xNodes, doubl
 	__syncthreads();
 
 	//check distances to all cluster nodes. Take the closest one
-	double minDistance = INT_MAX;
+	float minDistance = INT_MAX;
 	int chosenNode = -1;
 	for (int i = 0; i < K; i++)
 	{
-		double dist = distance2(xs[id], ys[id], xNodes[i], yNodes[i]);
+		float dist = distance2(xs[id], ys[id], xNodes[i], yNodes[i]);
 		if (dist < minDistance)
 		{
 			minDistance = dist;
@@ -91,13 +91,13 @@ __global__ void calcDistances(double* x, double* y, double* global_xNodes, doubl
 	changedNodes[blockIdx.x] = localChangedNodes[0];
 }
 
-__global__ void calcClusterCenters(double* x, double* y, double* global_xNodes, double* global_yNodes, int* chosenNodes)
+__global__ void calcClusterCenters(float* x, float* y, float* global_xNodes, float* global_yNodes, int* chosenNodes)
 {
 	//each block will do one cluster
 	int id = threadIdx.x;
 	int k = blockIdx.x;
-	__shared__ double xTotal[BLOCK_SIZE_CLUSTERS];
-	__shared__ double yTotal[BLOCK_SIZE_CLUSTERS];
+	__shared__ float xTotal[BLOCK_SIZE_CLUSTERS];
+	__shared__ float yTotal[BLOCK_SIZE_CLUSTERS];
 	__shared__ int numElements[BLOCK_SIZE_CLUSTERS];
 	xTotal[id] = 0.;
 	yTotal[id] = 0.;
@@ -131,7 +131,7 @@ __global__ void calcClusterCenters(double* x, double* y, double* global_xNodes, 
 	//have one thread update the value with the new cluster center
 	if (id == 0)
 	{
-		double newXPos = -1, newYPos = -1;
+		float newXPos = -1, newYPos = -1;
 		if (numElements[0] != 0)
 		{
 			newXPos = xTotal[0] / numElements[0];
@@ -142,7 +142,7 @@ __global__ void calcClusterCenters(double* x, double* y, double* global_xNodes, 
 	}
 }
 
-double my_max(double n1, double n2)
+float my_max(float n1, float n2)
 {
 	if (n1 > n2)
 		return n1;
@@ -158,7 +158,7 @@ int main(int argc, char **argv)
 	fgets(s, sizeof(s), stdin);
 }
 
-int calcDistancesCPU(double* xCoords, double* yCoords, double* xNodes, double* yNodes, int* chosenNodes)
+int calcDistancesCPU(float* xCoords, float* yCoords, float* xNodes, float* yNodes, int* chosenNodes)
 {
 	int changedNodes = 0;
 	//for every node, find the closest cluster center
@@ -166,11 +166,11 @@ int calcDistancesCPU(double* xCoords, double* yCoords, double* xNodes, double* y
 	for (int i = 0; i < N; i++)
 	{
 		//loop through every cluster center to find the closest
-		double minDistance = distance2CPU(xCoords[i], yCoords[i], xNodes[0], yNodes[0]);
+		float minDistance = distance2CPU(xCoords[i], yCoords[i], xNodes[0], yNodes[0]);
 		int chosenNode = 0;
 		for (int j = 1; j < K; j++)
 		{
-			double dist = distance2CPU(xCoords[i], yCoords[i], xNodes[j], yNodes[j]);
+			float dist = distance2CPU(xCoords[i], yCoords[i], xNodes[j], yNodes[j]);
 			if (dist < minDistance)
 			{
 				minDistance = dist;
@@ -186,10 +186,10 @@ int calcDistancesCPU(double* xCoords, double* yCoords, double* xNodes, double* y
 	return changedNodes;
 }
 
-void calcClusterCentersCPU(double* xCoords, double* yCoords, double* xNodes, double* yNodes, int* chosenNodes)
+void calcClusterCentersCPU(float* xCoords, float* yCoords, float* xNodes, float* yNodes, int* chosenNodes)
 {
-	double* xTotals = (double*)malloc(K * sizeof(double));
-	double* yTotals = (double*)malloc(K * sizeof(double));
+	float* xTotals = (float*)malloc(K * sizeof(float));
+	float* yTotals = (float*)malloc(K * sizeof(float));
 	int* numElements = (int*)malloc(K * sizeof(int));
 
 	for (int i = 0; i < K; i++)
@@ -214,15 +214,15 @@ void calcClusterCentersCPU(double* xCoords, double* yCoords, double* xNodes, dou
 	for (int i = 0; i < K; i++)
 	{
 		//get the total sums of all the x and y coordinates
-		double xTotal = xTotals[i];
-		double yTotal = yTotals[i];
+		float xTotal = xTotals[i];
+		float yTotal = yTotals[i];
 		//get the total number of elements
 		int numE = numElements[i];
 		if (numE > 0)
 		{
 			//find the average x and y coordinate
-			double newX = xTotal / numE;
-			double newY = yTotal / numE;
+			float newX = xTotal / numE;
+			float newY = yTotal / numE;
 			//update the cluster center with its new value
 			xNodes[i] = newX;
 			yNodes[i] = newY;
@@ -253,16 +253,16 @@ void runKMeansCPU()
 		cudaEventSynchronize(t1);
 
 		//initialize the data with random values
-		double* xCoords = (double*)malloc(N * sizeof(double));
-		double* yCoords = (double*)malloc(N * sizeof(double));
+		float* xCoords = (float*)malloc(N * sizeof(float));
+		float* yCoords = (float*)malloc(N * sizeof(float));
 		for (int i = 0; i < N; i++)
 		{
 			xCoords[i] = rand() % 100;
 			yCoords[i] = rand() % 100;
 		}
 
-		double* yNodes = (double*)malloc(K * sizeof(double));
-		double* xNodes = (double*)malloc(K * sizeof(double));
+		float* yNodes = (float*)malloc(K * sizeof(float));
+		float* xNodes = (float*)malloc(K * sizeof(float));
 		for (int i = 0; i < K; i++)
 		{
 			xNodes[i] = rand() % 100;
@@ -336,16 +336,16 @@ void runKMeansCUDA(int argc, char **argv)
 		int Nthreads = BLOCK_SIZE;
 
 		//initialize the data with random values
-		double* xCoords = (double*)malloc(N * sizeof(double));
-		double* yCoords = (double*)malloc(N * sizeof(double));
+		float* xCoords = (float*)malloc(N * sizeof(float));
+		float* yCoords = (float*)malloc(N * sizeof(float));
 		for (int i = 0; i < N; i++)
 		{
 			xCoords[i] = rand() % 100;
 			yCoords[i] = rand() % 100;
 		}
 
-		double* yNodes = (double*)malloc(K * sizeof(double));
-		double* xNodes = (double*)malloc(K * sizeof(double));
+		float* yNodes = (float*)malloc(K * sizeof(float));
+		float* xNodes = (float*)malloc(K * sizeof(float));
 		for (int i = 0; i < K; i++)
 		{
 			xNodes[i] = rand() % 100;
@@ -384,15 +384,15 @@ void runKMeansCUDA(int argc, char **argv)
 		}
 
 		//create the matching data on the gpu
-		double* d_xNodes;
-		checkCudaErrors(cudaMalloc((void **)&d_xNodes, K * sizeof(double)));
-		double* d_yNodes;
-		checkCudaErrors(cudaMalloc((void **)&d_yNodes, K * sizeof(double)));
+		float* d_xNodes;
+		checkCudaErrors(cudaMalloc((void **)&d_xNodes, K * sizeof(float)));
+		float* d_yNodes;
+		checkCudaErrors(cudaMalloc((void **)&d_yNodes, K * sizeof(float)));
 
-		double* d_xCoords;
-		checkCudaErrors(cudaMalloc((void **)&d_xCoords, N * sizeof(double)));
-		double* d_yCoords;
-		checkCudaErrors(cudaMalloc((void **)&d_yCoords, N * sizeof(double)));
+		float* d_xCoords;
+		checkCudaErrors(cudaMalloc((void **)&d_xCoords, N * sizeof(float)));
+		float* d_yCoords;
+		checkCudaErrors(cudaMalloc((void **)&d_yCoords, N * sizeof(float)));
 
 		int* d_chosenNodes;
 		checkCudaErrors(cudaMalloc((void **)&d_chosenNodes, N * sizeof(int)));
@@ -401,10 +401,10 @@ void runKMeansCUDA(int argc, char **argv)
 		checkCudaErrors(cudaMalloc((void **)&d_changedNodes, Nblocks * sizeof(int)));
 
 		//send the data to the gpu
-		checkCudaErrors(cudaMemcpy(d_xNodes, xNodes, K * sizeof(double), cudaMemcpyHostToDevice));
-		checkCudaErrors(cudaMemcpy(d_yNodes, yNodes, K * sizeof(double), cudaMemcpyHostToDevice));
-		checkCudaErrors(cudaMemcpy(d_xCoords, xCoords, N * sizeof(double), cudaMemcpyHostToDevice));
-		checkCudaErrors(cudaMemcpy(d_yCoords, yCoords, N * sizeof(double), cudaMemcpyHostToDevice));
+		checkCudaErrors(cudaMemcpy(d_xNodes, xNodes, K * sizeof(float), cudaMemcpyHostToDevice));
+		checkCudaErrors(cudaMemcpy(d_yNodes, yNodes, K * sizeof(float), cudaMemcpyHostToDevice));
+		checkCudaErrors(cudaMemcpy(d_xCoords, xCoords, N * sizeof(float), cudaMemcpyHostToDevice));
+		checkCudaErrors(cudaMemcpy(d_yCoords, yCoords, N * sizeof(float), cudaMemcpyHostToDevice));
 		checkCudaErrors(cudaMemcpy(d_chosenNodes, chosenNodes, N * sizeof(int), cudaMemcpyHostToDevice));
 		checkCudaErrors(cudaMemcpy(d_changedNodes, changedNodes, Nblocks * sizeof(int), cudaMemcpyHostToDevice));
 
@@ -415,7 +415,7 @@ void runKMeansCUDA(int argc, char **argv)
 		if (Nblocks > 32768)
 		{
 			NBlocksX = 32768;
-			double d = Nblocks / 32768.;
+			float d = Nblocks / 32768.;
 			NBlocksY = ceil(d);
 		}
 		else
@@ -451,10 +451,10 @@ void runKMeansCUDA(int argc, char **argv)
 		cudaEventRecord(t4, 0);
 		cudaEventSynchronize(t4);
 
-		double* newyNodes = (double*)malloc(K * sizeof(double));
-		double* newxNodes = (double*)malloc(K * sizeof(double));
-		checkCudaErrors(cudaMemcpy(newxNodes, d_xNodes, K * sizeof(double), cudaMemcpyDeviceToHost));
-		checkCudaErrors(cudaMemcpy(newyNodes, d_yNodes, K * sizeof(double), cudaMemcpyDeviceToHost));
+		float* newyNodes = (float*)malloc(K * sizeof(float));
+		float* newxNodes = (float*)malloc(K * sizeof(float));
+		checkCudaErrors(cudaMemcpy(newxNodes, d_xNodes, K * sizeof(float), cudaMemcpyDeviceToHost));
+		checkCudaErrors(cudaMemcpy(newyNodes, d_yNodes, K * sizeof(float), cudaMemcpyDeviceToHost));
 		cudaFree(d_changedNodes);
 		cudaFree(d_chosenNodes);
 		cudaFree(d_xCoords);
